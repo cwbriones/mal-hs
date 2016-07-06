@@ -10,27 +10,25 @@ import Text.ParserCombinators.Parsec hiding (try, spaces)
 import Control.Monad.Except
 
 readExpr :: String -> MalResult
-readExpr input = case parse parseExpr "" input of
+readExpr input = case parse (spaces *> malval <* spaces <* eof) "" input of
   Left err -> (throwError . Parser) err
   Right val -> return val
 
-parseExpr :: Parser MalVal
-parseExpr =
-  parseSymbol
-  <|> parseString
-  <|> parseNumber
-  <|> do
-    char '('
-    parsePair
+malval :: Parser MalVal
+malval =
+  malSymbol
+  <|> malNumber
+  <|> malString
+  <|> malList
 
-symbol :: Parser Char
-symbol = oneOf "!$%&|*+-/:<=>?@^_~#"
+malList :: Parser MalVal
+malList = fmap List $ char '(' *> spaces *> many (malval <* spaces) <* char ')'
 
-parseString :: Parser MalVal
-parseString = do char '"'
-                 x <- many chars
-                 char '"'
-                 return $ String x
+malString :: Parser MalVal
+malString = do char '"'
+               x <- many chars
+               char '"'
+               return $ String x
   where chars = escaped <|> noneOf "\""
         escaped = char '\\' >> choice (zipWith escapedChar codes replacements)
         codes        = ['b',  'n',  'f',  'r',  't',  '\\', '\"', '/']
@@ -39,37 +37,23 @@ parseString = do char '"'
 escapedChar :: Char -> Char -> Parser Char
 escapedChar code replacement = char code >> return replacement
 
-parseSymbol :: Parser MalVal
-parseSymbol = do
-  first <- letter <|> symbol
-  rest <- many (letter <|> digit <|> symbol)
-  let sym = first:rest
-  return $ case sym of
-    "true"  -> Bool True
-    "false" -> Bool False
-    "nil"   -> Nil
-    _       -> Symbol sym
+symbol :: Parser Char
+symbol = oneOf "!$%&|*+-/:<=>?@^_~#"
 
-parseNumber :: Parser MalVal
-parseNumber = (Number . read) <$> many1 digit
+malSymbol :: Parser MalVal
+malSymbol = do first <- letter <|> symbol
+               rest <- many (letter <|> digit <|> symbol)
+               let sym = first:rest
+               return $ case sym of
+                 "true"  -> Bool True
+                 "false" -> Bool False
+                 "nil"   -> Nil
+                 _       -> Symbol sym
 
-skipSpaces = skipMany space
+malNumber :: Parser MalVal
+malNumber = (Number . read) <$> many1 digit
 
-parsePair = do
-  skipSpaces
-  try $ char ')' >> return EmptyList
-  <|> do
-    car <- parseExpr
-    skipSpaces
-    try (parseDotted car) <|> parseList car
+spaces = skipMany (space <|> char ',')
 
-parseList car = do
-  cdr <- parsePair
-  return $ Pair car cdr
-
-parseDotted car = do
-  char '.'
-  skipSpaces
-  cdr <- parseExpr
-  char ')'
-  return $ Pair car cdr
+eol :: Parser ()
+eol = oneOf "\n\r" *> return ()

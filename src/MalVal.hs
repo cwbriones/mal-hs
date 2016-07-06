@@ -9,8 +9,7 @@ data MalVal
   | Number Integer
   | String String
   | Bool Bool
-  | Pair MalVal MalVal
-  | EmptyList
+  | List [MalVal]
   | Nil
   deriving (Read, Eq, Show)
 
@@ -20,15 +19,11 @@ data MalError
 prettyPrint :: MalVal -> String
 prettyPrint (Symbol s) = s
 prettyPrint (Number n) = show n
-prettyPrint (String s) = s
+prettyPrint (String s) = show s
 prettyPrint (Bool b) = if b then "true" else "false"
-prettyPrint EmptyList = "()"
 prettyPrint Nil = "nil"
-prettyPrint (Pair car cdr) = "(" ++ printPair car cdr ++ ")"
-
-printPair car cdr@(Pair cdar cddr) = prettyPrint car ++ " " ++ printPair cdar cddr
-printPair car EmptyList = prettyPrint car
-printPair car cdr = prettyPrint car ++ " . " ++ prettyPrint cdr
+prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
+  where printAll = unwords . map prettyPrint
 
 showError :: MalError -> String
 showError (Parser parseErr) = "Parse error at " ++ show parseErr

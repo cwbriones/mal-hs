@@ -11,14 +11,11 @@ main = repl
 
 repl :: IO ()
 repl = forever $ do
-  line <- prompt "mal> "
+  line <- prompt "user> "
   printResult $ evalStr line
 
 evalStr :: String -> MalResult
 evalStr = readExpr
-
-eval :: MalVal -> MalResult
-eval = return
 
 prompt :: String -> IO String
 prompt p = flushStr p >> getLine
