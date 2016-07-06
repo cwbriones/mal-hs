@@ -4,8 +4,7 @@ module Parse
 
 import MalVal
 
-import Text.Parsec (try)
-import Text.ParserCombinators.Parsec hiding (try, spaces)
+import Text.ParserCombinators.Parsec hiding (spaces)
 
 import Control.Monad.Except
 
@@ -15,11 +14,24 @@ readExpr input = case parse (spaces *> malval <* spaces <* eof) "" input of
   Right val -> return val
 
 malval :: Parser MalVal
-malval =
-  malSymbol
-  <|> malNumber
-  <|> malString
-  <|> malList
+malval = choice
+  [ malSymbol
+  , malNumber
+  , malString
+  , malList
+  , specialForm
+  ]
+
+specialForm :: Parser MalVal
+specialForm = choice $ map (uncurry2 sigil) sigils
+  where uncurry2 f (a, b) = f a b
+        sigils = [("~@", "splice-unquote"), ("'", "quote"), ("`", "quasiquote"), ("~", "unquote")]
+
+sigil :: String -> String -> Parser MalVal
+sigil s sym = try $ do
+                    string s
+                    val <- malval
+                    return $ List [Symbol sym, val]
 
 malList :: Parser MalVal
 malList = fmap List $ char '(' *> spaces *> many (malval <* spaces) <* char ')'
@@ -38,7 +50,7 @@ escapedChar :: Char -> Char -> Parser Char
 escapedChar code replacement = char code >> return replacement
 
 symbol :: Parser Char
-symbol = oneOf "!$%&|*+-/:<=>?@^_~#"
+symbol = oneOf "!$%&|*+-/:<=>?@^_#"
 
 malSymbol :: Parser MalVal
 malSymbol = do first <- letter <|> symbol
