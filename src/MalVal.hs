@@ -13,9 +13,6 @@ data MalVal
   | Nil
   deriving (Read, Eq, Show)
 
-data MalError
-  = Parser ParseError
-
 prettyPrint :: MalVal -> String
 prettyPrint (Symbol s) = s
 prettyPrint (Number n) = show n
@@ -25,13 +22,13 @@ prettyPrint Nil = "nil"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
   where printAll = unwords . map prettyPrint
 
+data MalError
+  = Parser ParseError
+
 showError :: MalError -> String
-showError (Parser parseErr) = "Parse error at " ++ show parseErr
+showError (Parser p) = show p
 
-instance Show MalError where show = showError
+instance Show MalError where
+  show = showError
 
-type MalResult = Either MalError MalVal
-
-printResult :: MalResult -> IO ()
-printResult (Left err)  = print err
-printResult (Right val) = putStrLn $ prettyPrint val
+type ErrorM m = ExceptT MalError m

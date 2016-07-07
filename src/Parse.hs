@@ -8,10 +8,12 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 
 import Control.Monad.Except
 
-readExpr :: String -> MalResult
-readExpr input = case parse (spaces *> malval <* spaces <* eof) "" input of
-  Left err -> (throwError . Parser) err
+readExpr :: String -> ErrorM IO MalVal
+readExpr input = case parse line "" input of
+  Left err -> throwError $ Parser err
   Right val -> return val
+  where
+    line = spaces *> malval <* spaces <* eof
 
 malval :: Parser MalVal
 malval = choice
