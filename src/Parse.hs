@@ -1,17 +1,18 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Parse
 ( readExpr
 ) where
 
-import MalVal
+import Control.Monad.Except
 
 import Text.ParserCombinators.Parsec hiding (spaces)
 
-import Control.Monad.Except
+import MalVal
 
-readExpr :: String -> ErrorM IO MalVal
+readExpr :: (MonadError MalError m) => String -> m MalVal
 readExpr input = case parse line "" input of
-  Left err -> throwError $ Parser err
-  Right val -> return val
+    Left err -> throwError $ Parser err
+    Right val -> return val
   where
     line = spaces *> malval <* spaces <* eof
 
