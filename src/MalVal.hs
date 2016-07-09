@@ -5,7 +5,7 @@ import Control.Monad.Except
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
 
-newtype Fn = Fn ([MalVal] -> ErrorM IO MalVal)
+newtype Fn = Fn ([MalVal] -> Either MalError MalVal)
 data MalVal
   = Symbol String
   | Number Integer
@@ -30,10 +30,13 @@ data MalError
   | UnresolvedSymbol String
   | CannotApply MalVal
   | BadArgs
+  | BadForm String
 
 showError :: MalError -> String
 showError (Parser p) = show p
 showError (UnresolvedSymbol var) = "Unable to resolve symbol \'" ++ var ++ "\' in this context."
+showError BadArgs = "Bad arguments for function."
+showError (BadForm msg) = "Invalid special form: " ++ msg
 
 instance Show MalError where
   show e = "Error: " ++ showError e
