@@ -55,6 +55,9 @@ prompt p = flushStr p >> getLine
 
 eval :: MalVal -> MalIO MalVal
 eval (List [Symbol "quote", val]) = return val
+eval (List [Symbol "if", pred, trueExpr, falseExpr]) = ifForm pred trueExpr falseExpr
+eval (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
+eval (List (Symbol "do":exprs))   = doForm exprs
 eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
 eval (List [Symbol "def!", Symbol var, val]) = define var val
 eval val@(Symbol var) = get >>= \env ->
@@ -69,6 +72,34 @@ eval val@(List list) = do
 eval val = return val
 
 {- SPECIAL FORMS -}
+
+-- do
+--
+-- (do <expr> ...)
+--
+-- Evaluates each expression from left to right, returning
+-- the result of the last expression.
+doForm [] = return Nil
+doForm exprs = do
+    values <- mapM eval exprs
+    return $ last values
+
+-- if
+--
+-- (if <pred> <expr1> [<expr2>])
+--
+-- If <pred> evaluates to anything other than false or nil, the
+-- value of <expr1> will be returned. Otherwise <expr2> will
+-- be evaluated and returned.
+--
+-- If <expr2> is unspecified and <pred> is falsey, then the expression
+-- evaluates to nil.
+ifForm pred trueExpr falseExpr = do
+    val <- eval pred
+    case val of
+        Nil -> eval falseExpr
+        Bool False -> eval falseExpr
+        _ -> eval trueExpr
 
 -- def!
 --
@@ -124,8 +155,18 @@ initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
                      ,("-", binOp (-))
                      ,("*", binOp (*))
                      ,("/", binOp Prelude.div)
+                     ,(">", compareOp (>))
+                     ,("<", compareOp (<))
+                     ,("=", equals)
                      ]
 
 binOp :: (Integer -> Integer -> Integer) -> [MalVal] -> Either MalError MalVal
 binOp op [Number a, Number b] = return . Number $ op a b
 binOp _ _ = throwError BadArgs
+
+compareOp :: (Integer -> Integer -> Bool) -> [MalVal] -> Either MalError MalVal
+compareOp op [Number a, Number b] = return . Bool $ a `op` b
+compareOp _ _ = throwError BadArgs
+
+equals [a, b] = return . Bool $ a == b
+equals _ = throwError BadArgs

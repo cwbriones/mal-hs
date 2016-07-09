@@ -15,6 +15,15 @@ data MalVal
   | Nil
   | Func Fn
 
+instance Eq MalVal where
+    (==) (Symbol a) (Symbol b) = a == b
+    (==) (Number a) (Number b) = a == b
+    (==) (String a) (String b) = a == b
+    (==) (Bool a) (Bool b) = a == b
+    (==) (List a) (List b) = a == b
+    (==) Nil Nil = True
+    (==) _ _ = False
+
 prettyPrint :: MalVal -> String
 prettyPrint (Symbol s) = s
 prettyPrint (Number n) = show n
