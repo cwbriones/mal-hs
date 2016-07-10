@@ -1,4 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Main where
 
@@ -13,27 +12,6 @@ import Text.ParserCombinators.Parsec (Parser)
 import Parse
 import MalVal
 import Environment
-
--- We want to have the state propagated regardless of if there is an error or not.
--- This means we want ExceptT e (StateT s m) a
---
--- This is isomorphic to m (Either e a, s), so we get the new state back regardless
--- of whether our operations have succeeded or not.
---
--- The other case would give us an m (Either e (a, s)), so our state would not be
--- persisted in the case of errors.
---
--- e = MalError
--- s = Env
--- m = IO
--- a = MalVal
-type MalEnv = Env MalVal
-
-newtype MalIO a = MalIO {
-    runMalIO :: ExceptT MalError (StateT MalEnv IO) a
-} deriving (MonadState MalEnv, Monad, Functor, Applicative, MonadIO, MonadError MalError)
-
-type ErrorStateM m a = ErrorM (StateT MalEnv m) a
 
 main = repl initEnv
 
@@ -62,18 +40,57 @@ eval (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
 eval (List (Symbol "do":exprs))   = doForm exprs
 eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
 eval (List [Symbol "def!", Symbol var, val]) = define var val
+eval (List [Symbol "fn*", List bindings, expr]) = makeLambda bindings expr
 eval val@(Symbol var) = get >>= \env ->
     case find var env of
         Nothing -> throwError $ UnresolvedSymbol var
         Just val -> return val
 eval val@(List []) = return val
-eval val@(List list) = do
-    newList <- mapM eval list
-    let applied = apply newList
-    either throwError return applied
+eval val@(List list) = mapM eval list >>= apply
 eval val = return val
 
+apply :: [MalVal] -> MalIO MalVal
+apply (Func (Fn f):args) = f args
+apply (Lambda vars expr:args) = do
+    env <- get
+    checkArgs (length vars) (length args)
+    withinEnv (boundEnv env) (eval expr)
+  where
+    boundEnv e = foldl bind (withParent e) (zip vars args)
+    bind e (var, val) = insert var val e
+    checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
+apply (val:_) = throwError $ CannotApply val
+
+--
+-- Evaluates an action within the context of a temporary environment.
+--
+withinEnv :: Env MalVal   -- ^The environment to perform our action within
+          -> MalIO MalVal -- ^The action to perform
+          -> MalIO MalVal
+withinEnv newEnv action = do
+    env <- get
+    put newEnv
+    val <- catchError action (restoreEnv env)
+    put env
+    return val
+  where
+    restoreEnv env err = put env >> throwError err
+
 {- SPECIAL FORMS -}
+
+-- fn*
+--
+-- (fn* (<var> ...) <expr>)
+--
+-- Creates a lambda with the given parameter list and body.
+makeLambda :: [MalVal] -> MalVal -> MalIO MalVal
+makeLambda bindings expr = do
+    vars <- extractBindings bindings
+    return $ Lambda vars expr
+  where
+    extractBindings = mapM extract
+    extract (Symbol s) = return s
+    extract _ = throwError $ BadForm "lambda parameters must be symbols."
 
 -- do
 --
@@ -126,20 +143,11 @@ letStar :: [MalVal]      -- ^The list of bindings
         -> MalVal        -- ^The expression to evaluate
         -> MalEnv        -- ^The parent environment
         -> MalIO MalVal
-letStar bindings expr env = do
-    put $ withParent env
-    evalBindings bindings
-    evalAndRestore (eval expr)
+letStar bindings expr env =
+    withinEnv childEnv bindAndEval
   where
-    -- After evaluating <body> we must be sure to restore the parent
-    -- environment, including in the error case.
-    evalAndRestore action = do
-        val <- catchError action restoreEnv
-        put env
-        return val
-
-    restoreEnv err = put env >> throwError err
-
+    childEnv = withParent env
+    bindAndEval = evalBindings bindings >> eval expr
     evalBindings (Symbol var:expr:rest) = do
         val <- eval expr
         env <- get
@@ -147,10 +155,6 @@ letStar bindings expr env = do
         evalBindings rest
     evalBindings [] = return ()
     evalBindings _  = throwError $ BadForm "invalid bindings list."
-
-apply :: [MalVal] -> Either MalError MalVal
-apply (Func (Fn f):args) = f args
-apply (val:_) = throwError $ BadApply val
 
 {- Built-in Functions -}
 
@@ -171,11 +175,11 @@ initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
                      ,("empty?", isEmpty)
                      ]
 
-binOp :: (Int -> Int -> Int) -> [MalVal] -> Either MalError MalVal
+binOp :: (Int -> Int -> Int) -> [MalVal] -> MalIO MalVal
 binOp op [Number a, Number b] = return . Number $ op a b
 binOp _ _ = throwError BadArgs
 
-compareOp :: (Int -> Int -> Bool) -> [MalVal] -> Either MalError MalVal
+compareOp :: (Int -> Int -> Bool) -> [MalVal] -> MalIO MalVal
 compareOp op [Number a, Number b] = return . Bool $ a `op` b
 compareOp _ _ = throwError BadArgs
 
@@ -189,6 +193,7 @@ isList [_] = return (Bool False)
 isList _ = throwError BadArgs
 
 count [List list] = return $ Number (length list)
+count [Nil] = return $ Number 0
 count _ = throwError BadArgs
 
 isEmpty [List list] = return $ Bool . null $ list
