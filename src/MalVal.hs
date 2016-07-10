@@ -1,11 +1,34 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module MalVal where
 
 import Control.Monad.Except
+import Control.Monad.State
 
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
 
-newtype Fn = Fn ([MalVal] -> Either MalError MalVal)
+import Environment
+
+-- We want to have the state propagated regardless of if there is an error or not.
+-- This means we want ExceptT e (StateT s m) a
+--
+-- This is isomorphic to m (Either e a, s), so we get the new state back regardless
+-- of whether our operations have succeeded or not.
+--
+-- The other case would give us an m (Either e (a, s)), so our state would not be
+-- persisted in the case of errors.
+--
+-- e = MalError
+-- s = Env
+-- m = IO
+-- a = MalVal
+type MalEnv = Env MalVal
+
+newtype MalIO a = MalIO {
+    runMalIO :: ExceptT MalError (StateT MalEnv IO) a
+} deriving (MonadState MalEnv, Monad, Functor, Applicative, MonadIO, MonadError MalError)
+
+newtype Fn = Fn ([MalVal] -> MalIO MalVal)
 data MalVal
   = Symbol String
   | Number Int
@@ -14,6 +37,7 @@ data MalVal
   | List [MalVal]
   | Nil
   | Func Fn
+  | Lambda (Env MalVal) [String] MalVal
 
 instance Eq MalVal where
     (==) (Symbol a) (Symbol b) = a == b
@@ -31,6 +55,7 @@ prettyPrint (String s) = show s
 prettyPrint (Bool b) = if b then "true" else "false"
 prettyPrint Nil = "nil"
 prettyPrint (Func _) = "#<builtin-function>"
+prettyPrint Lambda{} = "#<lambda>"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
   where printAll = unwords . map prettyPrint
 
@@ -40,14 +65,14 @@ instance Show MalVal where
 data MalError
   = Parser ParseError
   | UnresolvedSymbol String
-  | BadApply MalVal
+  | CannotApply MalVal
   | BadArgs
   | BadForm String
 
 showError :: MalError -> String
 showError (Parser p) = show p
 showError (UnresolvedSymbol var) = "Unable to resolve symbol \'" ++ var ++ "\' in this context."
-showError (BadApply val) = "Not a function: " ++ show val
+showError (CannotApply val) = "Cannot apply " ++ show val
 showError BadArgs = "Bad arguments for function."
 showError (BadForm msg) = "Invalid special form: " ++ msg
 
