@@ -8,7 +8,7 @@ import Text.ParserCombinators.Parsec hiding (try, spaces)
 newtype Fn = Fn ([MalVal] -> Either MalError MalVal)
 data MalVal
   = Symbol String
-  | Number Integer
+  | Number Int
   | String String
   | Bool Bool
   | List [MalVal]
@@ -34,16 +34,20 @@ prettyPrint (Func _) = "#<builtin-function>"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
   where printAll = unwords . map prettyPrint
 
+instance Show MalVal where
+    show = prettyPrint
+
 data MalError
   = Parser ParseError
   | UnresolvedSymbol String
-  | CannotApply MalVal
+  | BadApply MalVal
   | BadArgs
   | BadForm String
 
 showError :: MalError -> String
 showError (Parser p) = show p
 showError (UnresolvedSymbol var) = "Unable to resolve symbol \'" ++ var ++ "\' in this context."
+showError (BadApply val) = "Not a function: " ++ show val
 showError BadArgs = "Bad arguments for function."
 showError (BadForm msg) = "Invalid special form: " ++ msg
 

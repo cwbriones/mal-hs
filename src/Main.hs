@@ -27,15 +27,17 @@ import Environment
 -- s = Env
 -- m = IO
 -- a = MalVal
-newtype MalIO a = MalIO {
-    runMalIO :: ExceptT MalError (StateT Env IO) a
-} deriving (MonadState Env, Monad, Functor, Applicative, MonadIO, MonadError MalError)
+type MalEnv = Env MalVal
 
-type ErrorStateM m a = ErrorM (StateT Env m) a
+newtype MalIO a = MalIO {
+    runMalIO :: ExceptT MalError (StateT MalEnv IO) a
+} deriving (MonadState MalEnv, Monad, Functor, Applicative, MonadIO, MonadError MalError)
+
+type ErrorStateM m a = ErrorM (StateT MalEnv m) a
 
 main = repl initEnv
 
-repl :: Env -> IO ()
+repl :: MalEnv -> IO ()
 repl env = do
     (stepResult, newEnv) <- runStep env
     showResult stepResult
@@ -46,7 +48,7 @@ repl env = do
         line <- liftIO $ prompt "user> "
         val <- readExpr line
         eval val
-    showResult = either print (putStrLn . prettyPrint)
+    showResult = either print print
 
 prompt :: String -> IO String
 prompt p = flushStr p >> getLine
@@ -122,7 +124,7 @@ define var val = do
 -- environment.
 letStar :: [MalVal]      -- ^The list of bindings
         -> MalVal        -- ^The expression to evaluate
-        -> Env           -- ^The parent environment
+        -> MalEnv        -- ^The parent environment
         -> MalIO MalVal
 letStar bindings expr env = do
     put $ withParent env
@@ -148,8 +150,11 @@ letStar bindings expr env = do
 
 apply :: [MalVal] -> Either MalError MalVal
 apply (Func (Fn f):args) = f args
+apply (val:_) = throwError $ BadApply val
 
-initEnv :: Env
+{- Built-in Functions -}
+
+initEnv :: MalEnv
 initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
     where builtins = [("+", binOp (+))
                      ,("-", binOp (-))
@@ -157,16 +162,34 @@ initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
                      ,("/", binOp Prelude.div)
                      ,(">", compareOp (>))
                      ,("<", compareOp (<))
+                     ,(">=", compareOp (>=))
+                     ,("<=", compareOp (<=))
                      ,("=", equals)
+                     ,("list", list)
+                     ,("list?", isList)
+                     ,("count", count)
+                     ,("empty?", isEmpty)
                      ]
 
-binOp :: (Integer -> Integer -> Integer) -> [MalVal] -> Either MalError MalVal
+binOp :: (Int -> Int -> Int) -> [MalVal] -> Either MalError MalVal
 binOp op [Number a, Number b] = return . Number $ op a b
 binOp _ _ = throwError BadArgs
 
-compareOp :: (Integer -> Integer -> Bool) -> [MalVal] -> Either MalError MalVal
+compareOp :: (Int -> Int -> Bool) -> [MalVal] -> Either MalError MalVal
 compareOp op [Number a, Number b] = return . Bool $ a `op` b
 compareOp _ _ = throwError BadArgs
 
 equals [a, b] = return . Bool $ a == b
 equals _ = throwError BadArgs
+
+list = return . List
+
+isList [List _] = return (Bool True)
+isList [_] = return (Bool False)
+isList _ = throwError BadArgs
+
+count [List list] = return $ Number (length list)
+count _ = throwError BadArgs
+
+isEmpty [List list] = return $ Bool . null $ list
+isEmpty _ = throwError BadArgs
