@@ -7,7 +7,7 @@ import Control.Monad.State
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
 
-import Environment
+import IOEnv
 
 -- We want to have the state propagated regardless of if there is an error or not.
 -- This means we want ExceptT e (StateT s m) a
@@ -22,7 +22,7 @@ import Environment
 -- s = Env
 -- m = IO
 -- a = MalVal
-type MalEnv = Env MalVal
+type MalEnv = IOEnv MalVal
 
 newtype MalIO a = MalIO {
     runMalIO :: ExceptT MalError (StateT MalEnv IO) a
@@ -31,13 +31,13 @@ newtype MalIO a = MalIO {
 newtype Fn = Fn ([MalVal] -> MalIO MalVal)
 data MalVal
   = Symbol String
-  | Number Int
+  | Number Integer
   | String String
   | Bool Bool
   | List [MalVal]
   | Nil
   | Func Fn
-  | Lambda (Env MalVal) [String] MalVal
+  | Lambda [String] MalVal
 
 instance Eq MalVal where
     (==) (Symbol a) (Symbol b) = a == b
