@@ -1,7 +1,7 @@
 module Environment
 ( Env(..)
 , empty
-, withParent
+, extend
 , find
 , insert
 ) where
@@ -12,6 +12,7 @@ import qualified Data.Map as M
 data Env a = Env { scope :: M.Map String a
                  , parent :: Maybe (Env a)
                  }
+  deriving (Show)
 
 {- Creates an empty environment with no parent. -}
 empty :: Env a
@@ -20,8 +21,8 @@ empty = Env { scope = M.empty
             }
 
 {- Creates an empty environment with the given parent. -}
-withParent :: Env a -> Env a
-withParent p = empty { parent = Just p }
+extend :: Env a -> Env a
+extend p = empty { parent = Just p }
 
 {- Finds the value of var in env, if any. -}
 find :: String -> Env a -> Maybe a

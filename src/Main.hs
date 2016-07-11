@@ -8,30 +8,32 @@ import System.IO
 import Data.Functor.Identity
 
 import Text.ParserCombinators.Parsec (Parser)
+import qualified System.Console.Haskeline as HL
 
 import Parse
 import MalVal
 import Environment
 
-main = repl initEnv
+main = HL.runInputT HL.defaultSettings $ repl initEnv
 
-repl :: MalEnv -> IO ()
+repl :: MalEnv -> HL.InputT IO ()
 repl env = do
-    (stepResult, newEnv) <- runStep env
-    showResult stepResult
-    repl newEnv
+    minput <- HL.getInputLine "user> "
+    case minput of
+        Nothing -> return ()
+        Just line -> do
+            (result, newEnv) <- liftIO $ runStep line env
+            showResult result
+            repl newEnv
   where
-    runStep = runStateT $ runExceptT (runMalIO step)
-    step = do
-        line <- liftIO $ prompt "user> "
-        val <- readExpr line
+    runStep input = runStateT $ runExceptT (runMalIO (step input))
+    step input = do
+        val <- readExpr input
         eval val
-    showResult = either print print
+    showResult = either hlprint hlprint
 
-prompt :: String -> IO String
-prompt p = flushStr p >> getLine
-  where
-    flushStr str = putStr str >> hFlush stdout
+    hlprint :: (Show a) => a -> HL.InputT IO ()
+    hlprint = HL.outputStrLn . show
 
 eval :: MalVal -> MalIO MalVal
 eval (List [Symbol "quote", val]) = return val
@@ -56,7 +58,7 @@ apply (Lambda vars expr:args) = do
     checkArgs (length vars) (length args)
     withinEnv (boundEnv env) (eval expr)
   where
-    boundEnv e = foldl bind (withParent e) (zip vars args)
+    boundEnv e = foldl bind (extend e) (zip vars args)
     bind e (var, val) = insert var val e
     checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
 apply (val:_) = throwError $ CannotApply val
@@ -146,7 +148,7 @@ letStar :: [MalVal]      -- ^The list of bindings
 letStar bindings expr env =
     withinEnv childEnv bindAndEval
   where
-    childEnv = withParent env
+    childEnv = extend env
     bindAndEval = evalBindings bindings >> eval expr
     evalBindings (Symbol var:expr:rest) = do
         val <- eval expr
