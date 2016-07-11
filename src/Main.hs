@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Main where
 
 import Control.Monad
@@ -11,21 +12,26 @@ import Text.ParserCombinators.Parsec (Parser)
 
 import Parse
 import MalVal
-import Environment
+-- import Environment
+import qualified IOEnv
 
-main = repl initEnv
+newtype MalIO a = MalIO {
+    runMalIO :: ExceptT MalError IO a
+} deriving (Monad, Functor, Applicative, MonadIO, MonadError MalError)
 
-repl :: MalEnv -> IO ()
+main = IOEnv.empty >>= repl
+
+repl :: IOEnv.IOEnv -> IO ()
 repl env = do
-    (stepResult, newEnv) <- runStep env
-    showResult stepResult
-    repl newEnv
+    result <- runStep env
+    showResult result
+    repl env
   where
-    runStep = runStateT $ runExceptT (runMalIO step)
-    step = do
+    runStep env = runExceptT (runMalIO $ step env)
+    step env = do
         line <- liftIO $ prompt "user> "
         val <- readExpr line
-        eval val
+        eval env val
     showResult = either print print
 
 prompt :: String -> IO String
@@ -33,47 +39,47 @@ prompt p = flushStr p >> getLine
   where
     flushStr str = putStr str >> hFlush stdout
 
-eval :: MalVal -> MalIO MalVal
-eval (List [Symbol "quote", val]) = return val
-eval (List [Symbol "if", pred, trueExpr, falseExpr]) = ifForm pred trueExpr falseExpr
-eval (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
-eval (List (Symbol "do":exprs))   = doForm exprs
-eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
-eval (List [Symbol "def!", Symbol var, val]) = define var val
-eval (List [Symbol "fn*", List bindings, expr]) = makeLambda bindings expr
-eval val@(Symbol var) = get >>= \env ->
-    case find var env of
-        Nothing -> throwError $ UnresolvedSymbol var
-        Just val -> return val
-eval val@(List []) = return val
-eval val@(List list) = mapM eval list >>= apply
-eval val = return val
+eval :: IOEnv.IOEnv -> MalVal -> MalIO MalVal
+eval _ (List [Symbol "quote", val]) = return val
+eval env (List [Symbol "if", pred, trueExpr, falseExpr]) = ifForm env pred trueExpr falseExpr
+eval _ (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
+eval _ (List (Symbol "do":exprs))   = doForm exprs
+-- eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
+-- eval (List [Symbol "def!", Symbol var, val]) = define var val
+-- eval (List [Symbol "fn*", List bindings, expr]) = makeLambda bindings expr
+-- eval val@(Symbol var) = get >>= \env ->
+--     case find var env of
+--         Nothing -> throwError $ UnresolvedSymbol var
+--         Just val -> return val
+eval _ val@(List []) = return val
+eval env val@(List list) = mapM (eval env) list >>= apply
+eval _ val = return val
 
 apply :: [MalVal] -> MalIO MalVal
-apply (Func (Fn f):args) = f args
-apply (Lambda env vars expr:args) = do
-    checkArgs (length vars) (length args)
-    withinEnv boundEnv (eval expr)
-  where
-    boundEnv = foldl bind env (zip vars args)
-    bind e (var, val) = insert var val e
-    checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
+apply (Func (Fn f):args) = either throwError return (f args)
+-- apply (Lambda env vars expr:args) = do
+--     checkArgs (length vars) (length args)
+--     withinEnv boundEnv (eval expr)
+--   where
+--     boundEnv = foldl bind env (zip vars args)
+--     bind e (var, val) = insert var val e
+--     checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
 apply (val:_) = throwError $ CannotApply val
 
 --
 -- Evaluates an action within the context of a temporary environment.
 --
-withinEnv :: Env MalVal   -- ^The environment to perform our action within
-          -> MalIO MalVal -- ^The action to perform
-          -> MalIO MalVal
-withinEnv newEnv action = do
-    env <- get
-    put newEnv
-    val <- catchError action (restoreEnv env)
-    put env
-    return val
-  where
-    restoreEnv env err = put env >> throwError err
+-- withinEnv :: Env MalVal   -- ^The environment to perform our action within
+--           -> MalIO MalVal -- ^The action to perform
+--           -> MalIO MalVal
+-- withinEnv newEnv action = do
+--     env <- get
+--     put newEnv
+--     val <- catchError action (restoreEnv env)
+--     put env
+--     return val
+--   where
+--     restoreEnv env err = put env >> throwError err
 
 {- SPECIAL FORMS -}
 
@@ -105,15 +111,15 @@ withinEnv newEnv action = do
 --
 -- In this way we somehow need to bind the environment AFTER the lambda is created,
 -- and yet, the lambda needs to hold a reference to the outer env...
-makeLambda :: [MalVal] -> MalVal -> MalIO MalVal
-makeLambda bindings expr = do
-    env <- get
-    vars <- extractBindings bindings
-    return $ Lambda (withParent env) vars expr
-  where
-    extractBindings = mapM extract
-    extract (Symbol s) = return s
-    extract _ = throwError $ BadForm "lambda parameters must be symbols."
+-- makeLambda :: [MalVal] -> MalVal -> MalIO MalVal
+-- makeLambda bindings expr = do
+--     env <- get
+--     vars <- extractBindings bindings
+--     return $ Lambda (withParent env) vars expr
+--   where
+--     extractBindings = mapM extract
+--     extract (Symbol s) = return s
+--     extract _ = throwError $ BadForm "lambda parameters must be symbols."
 
 -- do
 --
@@ -121,9 +127,9 @@ makeLambda bindings expr = do
 --
 -- Evaluates each expression from left to right, returning
 -- the result of the last expression.
-doForm [] = return Nil
-doForm exprs = do
-    values <- mapM eval exprs
+doForm _ [] = return Nil
+doForm env exprs = do
+    values <- mapM (eval env) exprs
     return $ last values
 
 -- if
@@ -136,24 +142,24 @@ doForm exprs = do
 --
 -- If <expr2> is unspecified and <pred> is falsey, then the expression
 -- evaluates to nil.
-ifForm pred trueExpr falseExpr = do
+ifForm env pred trueExpr falseExpr = do
     val <- eval pred
     case val of
-        Nil -> eval falseExpr
-        Bool False -> eval falseExpr
-        _ -> eval trueExpr
+        Nil -> eval env falseExpr
+        Bool False -> eval env falseExpr
+        _ -> eval env trueExpr
 
 -- def!
 --
 -- (def! <var> <expr>)
 --
 -- Evaluates <expr> and binds its value to <var> in the current environment.
-define :: String -> MalVal -> MalIO MalVal
-define var val = do
-    newVal <- eval val
-    env <- get
-    put (insert var newVal env)
-    return newVal
+-- define :: String -> MalVal -> MalIO MalVal
+-- define var val = do
+--     newVal <- eval val
+--     env <- get
+--     put (insert var newVal env)
+--     return newVal
 
 -- let*
 --
@@ -162,62 +168,62 @@ define var val = do
 -- let* creates a new environment, binds each <expr> to the preceding
 -- <var> in the bindings list, and then evaluates <body> in this new
 -- environment.
-letStar :: [MalVal]      -- ^The list of bindings
-        -> MalVal        -- ^The expression to evaluate
-        -> MalEnv        -- ^The parent environment
-        -> MalIO MalVal
-letStar bindings expr env =
-    withinEnv childEnv bindAndEval
-  where
-    childEnv = withParent env
-    bindAndEval = evalBindings bindings >> eval expr
-    evalBindings (Symbol var:expr:rest) = do
-        val <- eval expr
-        env <- get
-        put (insert var val env)
-        evalBindings rest
-    evalBindings [] = return ()
-    evalBindings _  = throwError $ BadForm "invalid bindings list."
+-- letStar :: [MalVal]      -- ^The list of bindings
+--         -> MalVal        -- ^The expression to evaluate
+--         -> MalEnv        -- ^The parent environment
+--         -> MalIO MalVal
+-- letStar bindings expr env =
+--     withinEnv childEnv bindAndEval
+--   where
+--     childEnv = withParent env
+--     bindAndEval = evalBindings bindings >> eval expr
+--     evalBindings (Symbol var:expr:rest) = do
+--         val <- eval expr
+--         env <- get
+--         put (insert var val env)
+--         evalBindings rest
+--     evalBindings [] = return ()
+--     evalBindings _  = throwError $ BadForm "invalid bindings list."
 
 {- Built-in Functions -}
 
-initEnv :: MalEnv
-initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
-    where builtins = [("+", binOp (+))
-                     ,("-", binOp (-))
-                     ,("*", binOp (*))
-                     ,("/", binOp Prelude.div)
-                     ,(">", compareOp (>))
-                     ,("<", compareOp (<))
-                     ,(">=", compareOp (>=))
-                     ,("<=", compareOp (<=))
-                     ,("=", equals)
-                     ,("list", list)
-                     ,("list?", isList)
-                     ,("count", count)
-                     ,("empty?", isEmpty)
-                     ]
+-- initEnv :: MalEnv
+-- initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
+--     where builtins = [("+", binOp (+))
+--                      ,("-", binOp (-))
+--                      ,("*", binOp (*))
+--                      ,("/", binOp Prelude.div)
+--                      ,(">", compareOp (>))
+--                      ,("<", compareOp (<))
+--                      ,(">=", compareOp (>=))
+--                      ,("<=", compareOp (<=))
+--                      ,("=", equals)
+--                      ,("list", list)
+--                      ,("list?", isList)
+--                      ,("count", count)
+--                      ,("empty?", isEmpty)
+--                      ]
 
-binOp :: (Int -> Int -> Int) -> [MalVal] -> MalIO MalVal
-binOp op [Number a, Number b] = return . Number $ op a b
-binOp _ _ = throwError BadArgs
-
-compareOp :: (Int -> Int -> Bool) -> [MalVal] -> MalIO MalVal
-compareOp op [Number a, Number b] = return . Bool $ a `op` b
-compareOp _ _ = throwError BadArgs
-
-equals [a, b] = return . Bool $ a == b
-equals _ = throwError BadArgs
-
-list = return . List
-
-isList [List _] = return (Bool True)
-isList [_] = return (Bool False)
-isList _ = throwError BadArgs
-
-count [List list] = return $ Number (length list)
-count [Nil] = return $ Number 0
-count _ = throwError BadArgs
-
-isEmpty [List list] = return $ Bool . null $ list
-isEmpty _ = throwError BadArgs
+-- binOp :: (Int -> Int -> Int) -> [MalVal] -> Either MalError MalVal
+-- binOp op [Number a, Number b] = return . Number $ op a b
+-- binOp _ _ = throwError BadArgs
+--
+-- -- compareOp :: (Int -> Int -> Bool) -> [MalVal] -> Either MalError MalVal
+-- compareOp op [Number a, Number b] = return . Bool $ a `op` b
+-- compareOp _ _ = throwError BadArgs
+--
+-- equals [a, b] = return . Bool $ a == b
+-- equals _ = throwError BadArgs
+--
+-- list = return . List
+--
+-- isList [List _] = return (Bool True)
+-- isList [_] = return (Bool False)
+-- isList _ = throwError BadArgs
+--
+-- count [List list] = return $ Number (length list)
+-- count [Nil] = return $ Number 0
+-- count _ = throwError BadArgs
+--
+-- isEmpty [List list] = return $ Bool . null $ list
+-- isEmpty _ = throwError BadArgs

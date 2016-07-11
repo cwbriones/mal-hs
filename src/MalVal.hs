@@ -1,4 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module MalVal where
 
 import Control.Monad.Except
@@ -22,13 +21,7 @@ import Environment
 -- s = Env
 -- m = IO
 -- a = MalVal
-type MalEnv = Env MalVal
-
-newtype MalIO a = MalIO {
-    runMalIO :: ExceptT MalError (StateT MalEnv IO) a
-} deriving (MonadState MalEnv, Monad, Functor, Applicative, MonadIO, MonadError MalError)
-
-newtype Fn = Fn ([MalVal] -> MalIO MalVal)
+newtype Fn = Fn ([MalVal] -> Either MalError MalVal)
 data MalVal
   = Symbol String
   | Number Int
