@@ -31,13 +31,13 @@ newtype MalIO a = MalIO {
 newtype Fn = Fn ([MalVal] -> MalIO MalVal)
 data MalVal
   = Symbol String
-  | Number Int
+  | Number Integer
   | String String
   | Bool Bool
   | List [MalVal]
   | Nil
   | Func Fn
-  | Lambda [String] MalVal
+  | Lambda MalEnv [String] MalVal
 
 instance Eq MalVal where
     (==) (Symbol a) (Symbol b) = a == b

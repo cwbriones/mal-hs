@@ -41,7 +41,7 @@ eval (List [Symbol "if", pred, trueExpr, falseExpr]) = ifForm pred trueExpr fals
 eval (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
 eval (List (Symbol "do":exprs))   = doForm exprs
 eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
-eval (List [Symbol "def!", Symbol var, val]) = define var val
+eval (List [Symbol "def!", Symbol var, val]) = eval val >>= define var
 eval (List [Symbol "fn*", List bindings, expr]) = makeLambda bindings expr
 eval val@(Symbol var) = get >>= \env ->
     case find var env of
@@ -53,12 +53,12 @@ eval val = return val
 
 apply :: [MalVal] -> MalIO MalVal
 apply (Func (Fn f):args) = f args
-apply (Lambda vars expr:args) = do
-    env <- get
+apply (Lambda outer vars expr:args) = do
+    let env = extend outer
     checkArgs (length vars) (length args)
     withinEnv (boundEnv env) (eval expr)
   where
-    boundEnv e = foldl bind (extend e) (zip vars args)
+    boundEnv e = foldl bind e (zip vars args)
     bind e (var, val) = insert var val e
     checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
 apply (val:_) = throwError $ CannotApply val
@@ -87,8 +87,9 @@ withinEnv newEnv action = do
 -- Creates a lambda with the given parameter list and body.
 makeLambda :: [MalVal] -> MalVal -> MalIO MalVal
 makeLambda bindings expr = do
+    env <- get
     vars <- extractBindings bindings
-    return $ Lambda vars expr
+    return $ Lambda env vars expr
   where
     extractBindings = mapM extract
     extract (Symbol s) = return s
@@ -128,11 +129,14 @@ ifForm pred trueExpr falseExpr = do
 --
 -- Evaluates <expr> and binds its value to <var> in the current environment.
 define :: String -> MalVal -> MalIO MalVal
+define var val@(Lambda env args expr) = do
+    -- This is where I decided haskell is black magic
+    let new_env = insert var (Lambda new_env args expr) env
+    put new_env
+    return val
 define var val = do
-    newVal <- eval val
-    env <- get
-    put (insert var newVal env)
-    return newVal
+    modify (insert var val)
+    return val
 
 -- let*
 --
@@ -177,24 +181,25 @@ initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
                      ,("empty?", isEmpty)
                      ]
 
-binOp :: (Int -> Int -> Int) -> [MalVal] -> MalIO MalVal
+binOp :: (Integer -> Integer -> Integer) -> [MalVal] -> MalIO MalVal
 binOp op [Number a, Number b] = return . Number $ op a b
 binOp _ _ = throwError BadArgs
 
-compareOp :: (Int -> Int -> Bool) -> [MalVal] -> MalIO MalVal
+compareOp :: (Integer -> Integer -> Bool) -> [MalVal] -> MalIO MalVal
 compareOp op [Number a, Number b] = return . Bool $ a `op` b
 compareOp _ _ = throwError BadArgs
 
 equals [a, b] = return . Bool $ a == b
 equals _ = throwError BadArgs
 
+list :: [MalVal] -> MalIO MalVal
 list = return . List
 
 isList [List _] = return (Bool True)
 isList [_] = return (Bool False)
 isList _ = throwError BadArgs
 
-count [List list] = return $ Number (length list)
+count [List list] = return $ Number . toInteger $ length list
 count [Nil] = return $ Number 0
 count _ = throwError BadArgs
 
