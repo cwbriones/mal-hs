@@ -7,37 +7,28 @@ module Environment
 ) where
 
 import Control.Monad
-import Data.IORef
 import qualified Data.Map as M
 
-data Env a = Env { scope :: IORef (InnerEnv a)
-                 , outer :: Maybe (Env a)
+data Env a = Env { scope :: M.Map String a
+                 , parent :: Maybe (Env a)
                  }
+  deriving (Show)
 
-type InnerEnv a = M.Map String a
+{- Creates an empty environment with no parent. -}
+empty :: Env a
+empty = Env { scope = M.empty
+            , parent = Nothing
+            }
 
-empty :: IO (Env a)
-empty = do
-    newScope <- newIORef M.empty
-    return Env{scope = newScope, outer = Nothing}
+{- Creates an empty environment with the given parent. -}
+extend :: Env a -> Env a
+extend p = empty { parent = Just p }
 
-extend :: Env a -> IO (Env a)
-extend topEnv = do
-    newScope <- newIORef M.empty
-    return Env{scope = newScope, outer = Just topEnv}
+{- Finds the value of var in env, if any. -}
+find :: String -> Env a -> Maybe a
+find var env =
+  M.lookup var (scope env) `mplus` (parent env >>= find var)
 
-insert :: String -> a -> Env a -> IO ()
-insert var val envRef = modifyIORef (scope envRef) (M.insert var val)
-
-find :: String -> Env a -> IO (Maybe a)
-find var envRef = do env <- readIORef (scope envRef)
-                     findInner var env `ioplus` findParent var
-  where
-    ioplus = liftM2 mplus
-
-    findParent var =
-        case outer envRef of
-            Nothing -> return Nothing
-            Just p  -> find var p
-
-    findInner var env = return $ M.lookup var env
+{- Creates or updates the variable binding in the given Environment -}
+insert :: String -> a -> Env a -> Env a
+insert var val env = env { scope = M.insert var val (scope env) }
