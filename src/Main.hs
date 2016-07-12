@@ -14,7 +14,9 @@ import Parse
 import MalVal
 import Environment
 
-main = HL.runInputT HL.defaultSettings $ repl initEnv
+main = HL.runInputT HL.defaultSettings hlrepl
+  where
+    hlrepl = liftIO initializeEnv >>= repl
 
 repl :: MalEnv -> HL.InputT IO ()
 repl env = do
@@ -22,11 +24,11 @@ repl env = do
     case minput of
         Nothing -> return ()
         Just line -> do
-            (result, newEnv) <- liftIO $ runStep line env
+            (result, newEnv) <- liftIO $ run line env
             showResult result
             repl newEnv
   where
-    runStep input = runStateT $ runExceptT (runMalIO (step input))
+    run input = runStateT $ runExceptT $ runMalIO $ step input
     step input = do
         val <- readExpr input
         eval val
@@ -34,6 +36,9 @@ repl env = do
 
     hlprint :: (Show a) => a -> HL.InputT IO ()
     hlprint = HL.outputStrLn . show
+
+evalString :: String -> MalIO MalVal
+evalString s = readManyExpr s >>= doForm
 
 eval :: MalVal -> MalIO MalVal
 eval (List [Symbol "quote", val]) = return val
@@ -164,22 +169,40 @@ letStar bindings expr env =
 
 {- Built-in Functions -}
 
-initEnv :: MalEnv
-initEnv = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
-    where builtins = [("+", binOp (+))
-                     ,("-", binOp (-))
-                     ,("*", binOp (*))
-                     ,("/", binOp Prelude.div)
-                     ,(">", compareOp (>))
-                     ,("<", compareOp (<))
-                     ,(">=", compareOp (>=))
-                     ,("<=", compareOp (<=))
-                     ,("=", equals)
-                     ,("list", list)
-                     ,("list?", isList)
-                     ,("count", count)
-                     ,("empty?", isEmpty)
-                     ]
+-- | Runs a single step of the interpreter with the contents of the standard library
+-- defined in mal itself.
+initializeEnv :: IO MalEnv -- ^Action loading the standard environment.
+initializeEnv = run builtinsOnly
+  where
+    run = execStateT $ runExceptT (runMalIO $ initStdLib `catchError` printFailure)
+
+    io = liftIO
+    printFailure  _ = io $ print "error while loading standard library."
+
+    initStdLib :: MalIO ()
+    initStdLib = do
+        io $ print "Loading standard library..."
+        evalString standardLibrary
+        io $ print "done."
+
+    standardLibrary = "(def! not (fn* (x) (if x false true)))"
+
+    builtinsOnly = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
+
+    builtins = [("+", binOp (+))
+               ,("-", binOp (-))
+               ,("*", binOp (*))
+               ,("/", binOp Prelude.div)
+               ,(">", compareOp (>))
+               ,("<", compareOp (<))
+               ,(">=", compareOp (>=))
+               ,("<=", compareOp (<=))
+               ,("=", equals)
+               ,("list", list)
+               ,("list?", isList)
+               ,("count", count)
+               ,("empty?", isEmpty)
+               ]
 
 binOp :: (Integer -> Integer -> Integer) -> [MalVal] -> MalIO MalVal
 binOp op [Number a, Number b] = return . Number $ op a b

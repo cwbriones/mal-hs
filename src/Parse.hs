@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Parse
 ( readExpr
+, readManyExpr
 ) where
 
 import Control.Monad.Except
@@ -10,11 +11,17 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 import MalVal
 
 readExpr :: (MonadError MalError m) => String -> m MalVal
-readExpr input = case parse line "" input of
+readExpr = parseString malval
+
+readManyExpr :: (MonadError MalError m) => String -> m [MalVal]
+readManyExpr = parseString $ many malval
+
+parseString :: (MonadError MalError m) => Parser a -> String -> m a
+parseString parser input = case parse line "" input of
     Left err -> throwError $ Parser err
     Right val -> return val
   where
-    line = spaces *> malval <* spaces <* eof
+    line = spaces *> parser <* spaces <* eof
 
 malval :: Parser MalVal
 malval = choice
