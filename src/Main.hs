@@ -32,6 +32,7 @@ repl env = do
     step input = do
         val <- readExpr input
         eval val
+
     showResult = either hlprint hlprint
 
     hlprint :: (Show a) => a -> HL.InputT IO ()
@@ -41,20 +42,29 @@ evalString :: String -> MalIO MalVal
 evalString s = readManyExpr s >>= doForm
 
 eval :: MalVal -> MalIO MalVal
-eval (List [Symbol "quote", val]) = return val
-eval (List [Symbol "if", pred, trueExpr, falseExpr]) = ifForm pred trueExpr falseExpr
-eval (List [Symbol "if", pred, trueExpr]) = ifForm pred trueExpr Nil
-eval (List (Symbol "do":exprs))   = doForm exprs
-eval (List [Symbol "let*", List bindings, expr]) = get >>= letStar bindings expr
-eval (List [Symbol "def!", Symbol var, val]) = eval val >>= define var
-eval (List [Symbol "fn*", List bindings, expr]) = makeLambda bindings expr
+eval (List list) = do
+    evaluated <- evalList list
+    unthunk evaluated
+  where
+    unthunk val@(Thunk _ _) = eval val >>= unthunk
+    unthunk val = return val
 eval val@(Symbol var) = get >>= \env ->
     case find var env of
         Nothing -> throwError $ UnresolvedSymbol var
         Just val -> return val
-eval val@(List []) = return val
-eval val@(List list) = mapM eval list >>= apply
+eval val@(Thunk env expr) = withinEnv env (eval expr)
 eval val = return val
+
+evalList :: [MalVal] -> MalIO MalVal
+evalList [Symbol "quote", val] = return val
+evalList [Symbol "if", pred, trueExpr, falseExpr] = ifForm pred trueExpr falseExpr
+evalList [Symbol "if", pred, trueExpr] = ifForm pred trueExpr Nil
+evalList (Symbol "do":exprs) = doForm exprs
+evalList [Symbol "let*", List bindings, expr] = get >>= letStar bindings expr
+evalList [Symbol "def!", Symbol var, val] = eval val >>= define var
+evalList [Symbol "fn*", List bindings, expr] = makeLambda bindings expr
+evalList [] = return $ List []
+evalList list = mapM eval list >>= apply
 
 apply :: [MalVal] -> MalIO MalVal
 apply (Func (Fn f):args) = f args
@@ -123,10 +133,13 @@ doForm exprs = do
 -- evaluates to nil.
 ifForm pred trueExpr falseExpr = do
     val <- eval pred
+    env <- get
     case val of
-        Nil -> eval falseExpr
-        Bool False -> eval falseExpr
-        _ -> eval trueExpr
+        Nil -> thunk env falseExpr
+        Bool False -> thunk env falseExpr
+        _ -> thunk env trueExpr
+  where
+    thunk env expr = return $ Thunk env expr
 
 -- def!
 --
@@ -154,6 +167,18 @@ letStar :: [MalVal]      -- ^The list of bindings
         -> MalVal        -- ^The expression to evaluate
         -> MalEnv        -- ^The parent environment
         -> MalIO MalVal
+-- letStar bindings expr env = do
+--     setForms <- asSetForms bindings
+--     let doForm = cons (Symbol "do") (setForms ++ [expr])
+--     return $ Thunk (extend env) doForm
+--   where
+--     asSetForms bs = go bs []
+-- 
+--     go (var@(Symbol _):expr:rest) acc = go rest $ setForm var expr : acc
+--     go [] acc = return $ reverse acc
+--     go _ _  = throwError $ BadForm "invalid bindings list."
+-- 
+--     setForm var expr = List [Symbol "def!", var, expr]
 letStar bindings expr env =
     withinEnv childEnv bindAndEval
   where

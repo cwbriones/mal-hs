@@ -30,14 +30,15 @@ newtype MalIO a = MalIO {
 
 newtype Fn = Fn ([MalVal] -> MalIO MalVal)
 data MalVal
-  = Symbol String
-  | Number Integer
-  | String String
-  | Bool Bool
-  | List [MalVal]
+  = Symbol !String
+  | Number !Integer
+  | String !String
+  | Bool !Bool
+  | List ![MalVal]
   | Nil
   | Func Fn
-  | Lambda MalEnv [String] MalVal
+  | Lambda MalEnv ![String] !MalVal
+  | Thunk MalEnv MalVal
 
 instance Eq MalVal where
     (==) (Symbol a) (Symbol b) = a == b
