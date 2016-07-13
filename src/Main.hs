@@ -42,9 +42,7 @@ evalString :: String -> MalIO MalVal
 evalString s = readManyExpr s >>= doForm
 
 eval :: MalVal -> MalIO MalVal
-eval (List list) = do
-    evaluated <- evalList list
-    unthunk evaluated
+eval (List list) = evalList list >>= unthunk
   where
     unthunk val@(Thunk _ _) = eval val >>= unthunk
     unthunk val = return val
@@ -85,6 +83,7 @@ withinEnv :: Env MalVal   -- ^The environment to perform our action within
           -> MalIO MalVal -- ^The action to perform
           -> MalIO MalVal
 withinEnv newEnv action = do
+    {- FIXME: This seems like the source of non tail-calls -}
     env <- get
     put newEnv
     val <- catchError action (restoreEnv env)
@@ -173,11 +172,11 @@ letStar :: [MalVal]      -- ^The list of bindings
 --     return $ Thunk (extend env) doForm
 --   where
 --     asSetForms bs = go bs []
--- 
+--
 --     go (var@(Symbol _):expr:rest) acc = go rest $ setForm var expr : acc
 --     go [] acc = return $ reverse acc
 --     go _ _  = throwError $ BadForm "invalid bindings list."
--- 
+--
 --     setForm var expr = List [Symbol "def!", var, expr]
 letStar bindings expr env =
     withinEnv childEnv bindAndEval
