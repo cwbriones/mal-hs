@@ -31,7 +31,7 @@ repl env = do
     run input = runStateT $ runExceptT $ runMalIO $ step input
     step input = do
         val <- readExpr input
-        eval val
+        eval' val
 
     showResult = either hlprint hlprint
 
@@ -41,35 +41,41 @@ repl env = do
 evalString :: String -> MalIO MalVal
 evalString s = readManyExpr s >>= doForm
 
-eval :: MalVal -> MalIO MalVal
-eval (List list) = evalList list >>= unthunk
+eval' :: MalVal -> MalIO MalVal
+eval' val = do
+    evaluated <- eval val
+    unthunk evaluated
   where
-    unthunk val@(Thunk _ _) = eval val >>= unthunk
+    unthunk (Thunk env expr) = do
+        evaluated <- withinEnv env (eval expr)
+        unthunk evaluated
     unthunk val = return val
+
+eval :: MalVal -> MalIO MalVal
 eval val@(Symbol var) = get >>= \env ->
     case find var env of
         Nothing -> throwError $ UnresolvedSymbol var
         Just val -> return val
-eval val@(Thunk env expr) = withinEnv env (eval expr)
+eval val@(List []) = return val
+eval (List list) = evalList list
 eval val = return val
 
 evalList :: [MalVal] -> MalIO MalVal
 evalList [Symbol "quote", val] = return val
 evalList [Symbol "if", pred, trueExpr, falseExpr] = ifForm pred trueExpr falseExpr
 evalList [Symbol "if", pred, trueExpr] = ifForm pred trueExpr Nil
-evalList (Symbol "do":exprs) = doForm exprs
+evalList (Symbol "do":exprs)   = doForm exprs
 evalList [Symbol "let*", List bindings, expr] = get >>= letStar bindings expr
-evalList [Symbol "def!", Symbol var, val] = eval val >>= define var
+evalList [Symbol "def!", Symbol var, val] = eval' val >>= define var
 evalList [Symbol "fn*", List bindings, expr] = makeLambda bindings expr
-evalList [] = return $ List []
-evalList list = mapM eval list >>= apply
+evalList list = mapM eval' list >>= apply
 
 apply :: [MalVal] -> MalIO MalVal
 apply (Func (Fn f):args) = f args
 apply (Lambda outer vars expr:args) = do
-    let env = extend outer
+    let env = boundEnv $ extend outer
     checkArgs (length vars) (length args)
-    withinEnv (boundEnv env) (eval expr)
+    return $ Thunk env expr
   where
     boundEnv e = foldl bind e (zip vars args)
     bind e (var, val) = insert var val e
@@ -83,7 +89,6 @@ withinEnv :: Env MalVal   -- ^The environment to perform our action within
           -> MalIO MalVal -- ^The action to perform
           -> MalIO MalVal
 withinEnv newEnv action = do
-    {- FIXME: This seems like the source of non tail-calls -}
     env <- get
     put newEnv
     val <- catchError action (restoreEnv env)
@@ -117,7 +122,7 @@ makeLambda bindings expr = do
 -- the result of the last expression.
 doForm [] = return Nil
 doForm exprs = do
-    values <- mapM eval exprs
+    values <- mapM eval' exprs
     return $ last values
 
 -- if
@@ -131,7 +136,7 @@ doForm exprs = do
 -- If <expr2> is unspecified and <pred> is falsey, then the expression
 -- evaluates to nil.
 ifForm pred trueExpr falseExpr = do
-    val <- eval pred
+    val <- eval' pred
     env <- get
     case val of
         Nil -> thunk env falseExpr
@@ -166,23 +171,12 @@ letStar :: [MalVal]      -- ^The list of bindings
         -> MalVal        -- ^The expression to evaluate
         -> MalEnv        -- ^The parent environment
         -> MalIO MalVal
--- letStar bindings expr env = do
---     setForms <- asSetForms bindings
---     let doForm = cons (Symbol "do") (setForms ++ [expr])
---     return $ Thunk (extend env) doForm
---   where
---     asSetForms bs = go bs []
---
---     go (var@(Symbol _):expr:rest) acc = go rest $ setForm var expr : acc
---     go [] acc = return $ reverse acc
---     go _ _  = throwError $ BadForm "invalid bindings list."
---
---     setForm var expr = List [Symbol "def!", var, expr]
 letStar bindings expr env =
     withinEnv childEnv bindAndEval
   where
     childEnv = extend env
-    bindAndEval = evalBindings bindings >> eval expr
+    bindAndEval = evalBindings bindings >> eval' expr
+
     evalBindings (Symbol var:expr:rest) = do
         val <- eval expr
         env <- get
@@ -228,9 +222,11 @@ initializeEnv = run builtinsOnly
                ,("empty?", isEmpty)
                ]
 
+lprint = liftIO . print
+
 binOp :: (Integer -> Integer -> Integer) -> [MalVal] -> MalIO MalVal
 binOp op [Number a, Number b] = return . Number $ op a b
-binOp _ _ = throwError BadArgs
+binOp _ args = lprint ("binop: " ++ show args) >> throwError BadArgs
 
 compareOp :: (Integer -> Integer -> Bool) -> [MalVal] -> MalIO MalVal
 compareOp op [Number a, Number b] = return . Bool $ a `op` b
