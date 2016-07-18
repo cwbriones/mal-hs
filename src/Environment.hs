@@ -4,10 +4,12 @@ module Environment
 , extend
 , find
 , insert
+, isRoot
 ) where
 
 import Control.Monad
 import qualified Data.Map as M
+import Data.Maybe (isNothing)
 
 data Env a = Env { scope :: M.Map String a
                  , parent :: Maybe (Env a)
@@ -32,3 +34,6 @@ find var env =
 {- Creates or updates the variable binding in the given Environment -}
 insert :: String -> a -> Env a -> Env a
 insert var val env = env { scope = M.insert var val (scope env) }
+
+isRoot :: Env a -> Bool
+isRoot = isNothing . parent

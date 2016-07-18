@@ -4,6 +4,7 @@ module Main where
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except
+import Control.Exception (try)
 import System.IO
 import Data.Functor.Identity
 
@@ -39,18 +40,38 @@ repl env = do
     hlprint = HL.outputStrLn . show
 
 evalString :: String -> MalIO MalVal
-evalString s = readManyExpr s >>= doForm
+evalString s =
+    readManyExpr s >>= doForm >>= eval'
 
+{-| Fully evaluate a mal expression. -}
 eval' :: MalVal -> MalIO MalVal
 eval' val = do
     evaluated <- eval val
     unthunk evaluated
   where
     unthunk (Thunk env expr) = do
-        evaluated <- withinEnv env (eval expr)
+        evaluated <- evalWithin env expr
         unthunk evaluated
     unthunk val = return val
 
+-- If there's an effectful form in tail-position then it won't actually
+-- affect the top-level environment without this check. This isn't a fault
+-- of the do-form but is the only case where it can actually happen.
+--
+-- This is because the environment is replaced when it is in a thunk and
+-- the effects never propagate past evaluation.
+--
+-- example:
+-- (do (def! a 1))
+-- => 1
+-- a
+-- => Error: Unable to resolve symbol 'a' in this context.
+    evalWithin env expr =
+        if isRoot env
+            then eval expr
+            else withinEnv env (eval expr)
+
+{-| Evaluate a mal expression, possibly returning a thunk. -}
 eval :: MalVal -> MalIO MalVal
 eval val@(Symbol var) = get >>= \env ->
     case find var env of
@@ -120,10 +141,12 @@ makeLambda bindings expr = do
 --
 -- Evaluates each expression from left to right, returning
 -- the result of the last expression.
+--
 doForm [] = return Nil
-doForm exprs = do
-    values <- mapM eval' exprs
-    return $ last values
+doForm [expr] = do
+    env <- get
+    return $ Thunk env expr
+doForm (expr:exprs) = eval' expr >> doForm exprs
 
 -- if
 --
@@ -203,8 +226,6 @@ initializeEnv = run builtinsOnly
         evalString standardLibrary
         io $ print "done."
 
-    standardLibrary = "(def! not (fn* (x) (if x false true)))"
-
     builtinsOnly = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
 
     builtins = [("+", binOp (+))
@@ -220,7 +241,17 @@ initializeEnv = run builtinsOnly
                ,("list?", isList)
                ,("count", count)
                ,("empty?", isEmpty)
+               ,("pr-str", prStr)
+               ,("prn", prn)
+               ,("read-string", readString)
+               ,("slurp", slurp)
+               ,("eval", libeval)
+               ,("str", str)
+               ,("load-file", loadFile)
                ]
+
+standardLibrary =
+    "(def! not (fn* (x) (if x false true)))"
 
 lprint = liftIO . print
 
@@ -248,3 +279,46 @@ count _ = throwError BadArgs
 
 isEmpty [List list] = return $ Bool . null $ list
 isEmpty _ = throwError BadArgs
+
+str strings = (String . concat) <$> unbox strings []
+  where
+    unbox [] acc = return $ reverse acc
+    unbox (String s:strings) acc = unbox strings (s:acc)
+    unbox _ _ = throwError BadArgs
+
+libeval [val] = eval' val
+libeval _ = throwError BadArgs
+
+prStr :: [MalVal] -> MalIO MalVal
+prStr [val] = return . String . show $ val
+prStr _     = throwError BadArgs
+
+prn :: [MalVal] -> MalIO MalVal
+prn [val] = liftIO $ print val >> return Nil
+prn _     = throwError BadArgs
+
+readString :: [MalVal] -> MalIO MalVal
+readString [String expr] = readExpr expr
+readString _ = throwError BadArgs
+
+slurp :: [MalVal] -> MalIO MalVal
+slurp [String path] = liftIOErr (readFile path) String
+slurp _ = throwError BadArgs
+
+{-| Loads a file and evaluates it within the current environment.
+ -
+ - This should be defined in Mal itself but because the environment
+ - is built immutably we must make it a built-in. Otherwise the definitions
+ - loaded would not be injected into the global environment. -}
+loadFile :: [MalVal] -> MalIO MalVal
+loadFile [String path] = do
+    str <- liftIOErr (readFile path) id
+    evalString str
+loadFile _ = throwError BadArgs
+
+liftIOErr :: IO a -> (a -> b) -> MalIO b
+liftIOErr io f = do
+    result <- liftIO $ try io
+    either throwIOErr (return . f) result
+  where
+    throwIOErr err = throwError $ IO err

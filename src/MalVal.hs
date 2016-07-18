@@ -69,6 +69,7 @@ data MalError
   | CannotApply MalVal
   | BadArgs
   | BadForm String
+  | IO IOError
 
 showError :: MalError -> String
 showError (Parser p) = show p
@@ -76,6 +77,7 @@ showError (UnresolvedSymbol var) = "Unable to resolve symbol \'" ++ var ++ "\' i
 showError (CannotApply val) = "Cannot apply " ++ show val
 showError BadArgs = "Bad arguments for function."
 showError (BadForm msg) = "Invalid special form: " ++ msg
+showError (IO err) = show err
 
 instance Show MalError where
   show e = "Error: " ++ showError e

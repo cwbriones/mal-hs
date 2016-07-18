@@ -14,7 +14,7 @@ readExpr :: (MonadError MalError m) => String -> m MalVal
 readExpr = parseString malval
 
 readManyExpr :: (MonadError MalError m) => String -> m [MalVal]
-readManyExpr = parseString $ many malval
+readManyExpr = parseString $ many (malval <* spaces)
 
 parseString :: (MonadError MalError m) => Parser a -> String -> m a
 parseString parser input = case parse line "" input of
