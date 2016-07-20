@@ -7,6 +7,7 @@ import Control.Monad.Except
 import Control.Exception (try)
 import System.IO
 import Data.Functor.Identity
+import Data.IORef
 
 import Text.ParserCombinators.Parsec (Parser)
 import qualified System.Console.Haskeline as HL
@@ -102,6 +103,15 @@ apply (Lambda outer vars expr:args) = do
     bind e (var, val) = insert var val e
     checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
 apply (val:_) = throwError $ CannotApply val
+
+swap :: [MalVal] -> MalIO MalVal
+swap (atom@(Atom ref):f:varargs) = do
+    atomVal <- liftIO $ readIORef ref
+    applied <- apply (f:atomVal:varargs)
+    evaluated <- eval' applied
+    liftIO $ writeIORef ref evaluated
+    return evaluated
+swap _             = throwError BadArgs
 
 --
 -- Evaluates an action within the context of a temporary environment.
@@ -248,6 +258,11 @@ initializeEnv = run builtinsOnly
                ,("eval", libeval)
                ,("str", str)
                ,("load-file", loadFile)
+               ,("swap!", swap)
+               ,("atom?", atomPred)
+               ,("atom!", atom)
+               ,("deref", deref)
+               ,("reset!", reset)
                ]
 
 standardLibrary =

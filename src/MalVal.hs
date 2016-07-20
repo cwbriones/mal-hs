@@ -3,6 +3,7 @@ module MalVal where
 
 import Control.Monad.Except
 import Control.Monad.State
+import Data.IORef
 
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
@@ -39,6 +40,7 @@ data MalVal
   | Func Fn
   | Lambda MalEnv ![String] !MalVal
   | Thunk MalEnv MalVal
+  | Atom (IORef MalVal)
 
 instance Eq MalVal where
     (==) (Symbol a) (Symbol b) = a == b
@@ -59,6 +61,7 @@ prettyPrint (Func _) = "#<builtin-function>"
 prettyPrint Lambda{} = "#<lambda>"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
   where printAll = unwords . map prettyPrint
+prettyPrint Atom{} = "#<atom>"
 
 instance Show MalVal where
     show = prettyPrint
@@ -83,3 +86,28 @@ instance Show MalError where
   show e = "Error: " ++ showError e
 
 type ErrorM m = ExceptT MalError m
+
+atom :: [MalVal] -> MalIO MalVal
+atom [val] = do
+    ref <- liftIO $ newIORef val
+    let atom = Atom ref
+    return atom
+atom _     = throwError BadArgs
+
+atomPred :: [MalVal] -> MalIO MalVal
+atomPred [Atom _] = return $ Bool True
+atomPred [_]      = return $ Bool False
+atomPred _        = throwError BadArgs
+
+deref :: [MalVal] -> MalIO MalVal
+deref [Atom ref] = liftIO $ readIORef ref
+deref _          = throwError BadArgs
+
+reset :: [MalVal] -> MalIO MalVal
+reset [atom@(Atom ref), val] = do
+    liftIO $ atomicWriteIORef ref val
+    return atom
+reset _             = throwError BadArgs
+
+    {- liftIO $ atomicWriteIORef ref val -}
+
