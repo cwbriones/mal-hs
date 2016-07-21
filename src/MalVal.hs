@@ -73,6 +73,8 @@ data MalError
   | BadArgs
   | BadForm String
   | IO IOError
+  | UnquoteError
+  | SpliceUnquoteError
 
 showError :: MalError -> String
 showError (Parser p) = show p
@@ -81,6 +83,8 @@ showError (CannotApply val) = "Cannot apply " ++ show val
 showError BadArgs = "Bad arguments for function."
 showError (BadForm msg) = "Invalid special form: " ++ msg
 showError (IO err) = show err
+showError UnquoteError = "Unquote called from outside quasiquote."
+showError SpliceUnquoteError = "Expressions within splice-unquote must evaluate to a list."
 
 instance Show MalError where
   show e = "Error: " ++ showError e

@@ -84,13 +84,30 @@ eval val = return val
 
 evalList :: [MalVal] -> MalIO MalVal
 evalList [Symbol "quote", val] = return val
+evalList [Symbol "quasiquote", val] = quasiquote val
+evalList [Symbol "unquote", val] = throwError UnquoteError
+evalList [Symbol "splice-unquote", val] = throwError UnquoteError
 evalList [Symbol "if", pred, trueExpr, falseExpr] = ifForm pred trueExpr falseExpr
 evalList [Symbol "if", pred, trueExpr] = ifForm pred trueExpr Nil
 evalList (Symbol "do":exprs)   = doForm exprs
 evalList [Symbol "let*", List bindings, expr] = get >>= letStar bindings expr
 evalList [Symbol "def!", Symbol var, val] = eval' val >>= define var
-evalList [Symbol "fn*", List bindings, expr] = makeLambda bindings expr
+evalList [Symbol "fn*", List params, expr] = makeLambda params expr
 evalList list = mapM eval' list >>= apply
+
+quasiquote (List [Symbol "unquote", val]) = eval' val
+quasiquote (List list) = quasiquoteList list []
+  where
+    quasiquoteList [] acc = return $ List $ reverse acc
+    quasiquoteList (List [Symbol "splice-unquote", val]:exprs) acc = do
+        evaluated <- eval' val
+        case evaluated of
+          List list -> quasiquoteList exprs (reverse list ++ acc)
+          _ -> throwError SpliceUnquoteError
+    quasiquoteList (expr:exprs) acc = do
+        quoted <- quasiquote expr
+        quasiquoteList exprs $! (quoted:acc)
+quasiquote val = return val
 
 apply :: [MalVal] -> MalIO MalVal
 apply (Func (Fn f):args) = f args
@@ -260,7 +277,7 @@ initializeEnv = run builtinsOnly
                ,("load-file", loadFile)
                ,("swap!", swap)
                ,("atom?", atomPred)
-               ,("atom!", atom)
+               ,("atom", atom)
                ,("deref", deref)
                ,("reset!", reset)
                ]

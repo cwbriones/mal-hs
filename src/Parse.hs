@@ -35,7 +35,7 @@ malval = choice
 specialForm :: Parser MalVal
 specialForm = choice $ map (uncurry2 sigil) sigils
   where uncurry2 f (a, b) = f a b
-        sigils = [("~@", "splice-unquote"), ("'", "quote"), ("`", "quasiquote"), ("~", "unquote")]
+        sigils = [("@", "deref"), ("~@", "splice-unquote"), ("'", "quote"), ("`", "quasiquote"), ("~", "unquote")]
 
 sigil :: String -> String -> Parser MalVal
 sigil s sym = try $ do
@@ -60,7 +60,7 @@ escapedChar :: Char -> Char -> Parser Char
 escapedChar code replacement = char code >> return replacement
 
 symbol :: Parser Char
-symbol = oneOf "!$%&|*+-/:<=>?@^_#"
+symbol = oneOf "!$%&|*+-/:<=>?^_#"
 
 malSymbol :: Parser MalVal
 malSymbol = do first <- letter <|> symbol
