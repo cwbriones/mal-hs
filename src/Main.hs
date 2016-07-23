@@ -118,7 +118,7 @@ apply (Lambda outer vars expr:args) = do
     return $ Thunk env expr
   where
     boundEnv e = foldl bind e (zip vars args)
-    bind e (var, val) = insert var val e
+    bind e (var, val) = insertRec var val e
     checkArgs a b = unless (a == b) $ throwError $ BadForm "Wrong number of arguments"
 apply (val:_) = throwError $ CannotApply val
 
@@ -202,14 +202,18 @@ ifForm pred trueExpr falseExpr = do
 --
 -- Evaluates <expr> and binds its value to <var> in the current environment.
 define :: String -> MalVal -> MalIO MalVal
-define var val@(Lambda env args expr) = do
-    -- This is where I decided haskell is black magic
-    let new_env = insert var (Lambda new_env args expr) env
-    put new_env
-    return val
 define var val = do
-    modify (insert var val)
+    modify (insertRec var val)
     return val
+
+-- Insert a value into an environment, properly defining the environment recursively
+-- when inserting a lambda.
+insertRec :: String -> MalVal -> Env MalVal -> Env MalVal
+insertRec var val@(Lambda _ args expr) env =
+    let new_env = insert var (Lambda new_env args expr) env
+        in
+    new_env
+insertRec var val env = insert var val env
 
 -- let*
 --
@@ -230,8 +234,7 @@ letStar bindings expr env =
 
     evalBindings (Symbol var:expr:rest) = do
         val <- eval expr
-        env <- get
-        put (insert var val env)
+        modify (insertRec var val)
         evalBindings rest
     evalBindings [] = return ()
     evalBindings _  = throwError $ BadForm "invalid bindings list."
