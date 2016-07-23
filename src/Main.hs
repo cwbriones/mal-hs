@@ -92,6 +92,7 @@ evalList [Symbol "if", pred, trueExpr] = ifForm pred trueExpr Nil
 evalList (Symbol "do":exprs)   = doForm exprs
 evalList [Symbol "let*", List bindings, expr] = get >>= letStar bindings expr
 evalList [Symbol "def!", Symbol var, val] = eval' val >>= define var
+evalList [Symbol "defn!", Symbol var, List params, expr] = makeLambda params expr >>= define var
 evalList [Symbol "fn*", List params, expr] = makeLambda params expr
 evalList list = mapM eval' list >>= apply
 
