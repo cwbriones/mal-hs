@@ -272,6 +272,8 @@ initializeEnv = run builtinsOnly
                ,("list?", isList)
                ,("count", count)
                ,("empty?", isEmpty)
+               ,("concat", malconcat)
+               ,("cons", cons)
                ,("pr-str", prStr)
                ,("prn", prn)
                ,("read-string", readString)
@@ -315,6 +317,15 @@ count _ = throwError BadArgs
 
 isEmpty [List list] = return $ Bool . null $ list
 isEmpty _ = throwError BadArgs
+
+cons [val, List list] = return $ List (val:list)
+cons _ = throwError BadArgs
+
+malconcat lists = go lists []
+  where
+    go [] acc = return . List . concat . reverse $ acc
+    go (List list:lists) acc = go lists (list:acc)
+    go _ _ = throwError BadArgs
 
 str strings = (String . concat) <$> unbox strings []
   where
