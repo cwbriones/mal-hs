@@ -25,7 +25,8 @@ parseString parser input = case parse line "" input of
 
 malval :: Parser MalVal
 malval = choice
-  [ malSymbol
+  [ malMap
+  , malSymbol
   , malNumber
   , malString
   , malList
@@ -44,7 +45,14 @@ sigil s sym = try $ do
                     return $ List [Symbol sym, val]
 
 malList :: Parser MalVal
-malList = fmap List $ char '(' *> spaces *> many (malval <* spaces) <* char ')'
+malList = List <$> malCollection '(' ')'
+
+malMap :: Parser MalVal
+malMap = fmap (List . (:) (Symbol "hash-map")) elements
+  where
+    elements = malCollection '{' '}'
+
+malCollection c1 c2 = char c1 *> spaces *> many (malval <* spaces) <* char c2
 
 malString :: Parser MalVal
 malString = do char '"'

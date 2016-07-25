@@ -14,7 +14,7 @@ import Data.Maybe (isNothing)
 data Env a = Env { scope :: M.Map String a
                  , parent :: Maybe (Env a)
                  }
-  deriving (Show)
+  deriving (Show, Eq)
 
 {- Creates an empty environment with no parent. -}
 empty :: Env a

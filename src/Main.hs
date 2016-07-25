@@ -111,7 +111,9 @@ quasiquote (List list) = quasiquoteList list []
 quasiquote val = return val
 
 apply :: [MalVal] -> MalIO MalVal
-apply (Func (Fn f):args) = f args
+apply [sym@(Symbol k), term] = hashmapGet [term, sym]
+apply [sym@(Symbol k), term, notFound] = hashmapGet [term, sym, notFound]
+apply (Func Fn{f = f}:args) = f args
 apply (Lambda outer vars expr:args) = do
     let env = boundEnv $ extend outer
     checkArgs (length vars) (length args)
@@ -257,7 +259,10 @@ initializeEnv = run builtinsOnly
         evalString standardLibrary
         io $ print "done."
 
-    builtinsOnly = foldl (\env (var, f) -> insert var (Func (Fn f)) env) empty builtins
+    builtinsOnly = fst $ foldl defineBuiltin (empty, 0) builtins
+
+    defineBuiltin (env, fid) (var, f) = (new_env, fid + 1)
+        where new_env = insert var(Func Fn{f=f, fid=0}) env
 
     builtins = [("+", binOp (+))
                ,("-", binOp (-))
@@ -286,6 +291,14 @@ initializeEnv = run builtinsOnly
                ,("atom", atom)
                ,("deref", deref)
                ,("reset!", reset)
+               ,("hash-map", makeHashmap)
+               ,("get", hashmapGet)
+               ,("assoc", hashmapPut)
+               ,("dissoc", hashmapRemove)
+               ,("contains?", hashmapContains)
+               ,("keys", hashmapKeys)
+               ,("vals", hashmapValues)
+               ,("map?", mapPred)
                ]
 
 standardLibrary =

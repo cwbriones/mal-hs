@@ -1,10 +1,15 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
 module MalVal where
 
 import Control.Monad.Except
 import Control.Monad.State
 import Data.IORef
+import Data.List (foldl')
+import Data.Maybe (isJust)
 
+import qualified Data.HashMap.Lazy as HM
+import Data.Hashable (Hashable, hashWithSalt)
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
 
@@ -29,27 +34,41 @@ newtype MalIO a = MalIO {
     runMalIO :: ExceptT MalError (StateT MalEnv IO) a
 } deriving (MonadState MalEnv, Monad, Functor, Applicative, MonadIO, MonadError MalError)
 
-newtype Fn = Fn ([MalVal] -> MalIO MalVal)
+data Fn = Fn {fid :: Int, f :: [MalVal] -> MalIO MalVal}
+
+instance Eq Fn where
+    (==) Fn{fid = a} Fn{fid = b} = a == b
+
 data MalVal
   = Symbol !String
   | Number !Integer
   | String !String
   | Bool !Bool
   | List ![MalVal]
+  | Map (HM.HashMap MalVal MalVal)
   | Nil
   | Func Fn
   | Lambda MalEnv ![String] !MalVal
   | Thunk MalEnv MalVal
   | Atom (IORef MalVal)
+  deriving (Eq)
 
-instance Eq MalVal where
-    (==) (Symbol a) (Symbol b) = a == b
-    (==) (Number a) (Number b) = a == b
-    (==) (String a) (String b) = a == b
-    (==) (Bool a) (Bool b) = a == b
-    (==) (List a) (List b) = a == b
-    (==) Nil Nil = True
-    (==) _ _ = False
+instance Hashable MalVal where
+    -- String Constructors
+    hashWithSalt s (Symbol x) = s `hashWithSalt` (0::Int) `hashWithSalt` x
+    hashWithSalt s (String x) = s `hashWithSalt` (1::Int) `hashWithSalt` x
+    -- Number Constructors
+    hashWithSalt s (Number x) = s `hashWithSalt` (0::Int) `hashWithSalt` x
+    hashWithSalt s (Func Fn{fid = fid}) = s `hashWithSalt` (1::Int) `hashWithSalt` fid
+    hashWithSalt s Nil        = s `hashWithSalt` (2::Int) `hashWithSalt` False
+    hashWithSalt s (Bool x)   = s `hashWithSalt` (3::Int) `hashWithSalt` x
+    -- Misc
+    hashWithSalt s (List x)   = s `hashWithSalt` x
+    hashWithSalt s (Lambda _ args expr) = s `hashWithSalt` args `hashWithSalt` expr
+    -- We should never have to hash a Thunk.
+    hashWithSalt _ (Thunk _ _) = error "Attempted to hash a thunk"
+    -- Atoms not supported at the moment.
+    hashWithSalt _ (Atom _)    = undefined
 
 prettyPrint :: MalVal -> String
 prettyPrint (Symbol s) = s
@@ -61,6 +80,10 @@ prettyPrint (Func _) = "#<builtin-function>"
 prettyPrint Lambda{} = "#<lambda>"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
   where printAll = unwords . map prettyPrint
+prettyPrint (Map map) = "{" ++ prettyPrintInner map ++ "}"
+  where
+    prettyPrintInner map = unwords . reverse $ HM.foldrWithKey showKV [] map
+    showKV k v s = show v:show k:s
 prettyPrint Atom{} = "#<atom>"
 
 instance Show MalVal where
@@ -113,5 +136,49 @@ reset [atom@(Atom ref), val] = do
     return atom
 reset _             = throwError BadArgs
 
-    {- liftIO $ atomicWriteIORef ref val -}
+makeHashmap :: [MalVal] -> MalIO MalVal
+makeHashmap elements =
+    if even $ length elements
+        then return $ malmap $ pair elements
+        else throwError BadArgs
+  where
+    pair [] = []
+    pair (x:y:zs) = (x, y) : pair zs
+
+hashmapGet :: [MalVal] -> MalIO MalVal
+hashmapGet [map, key] = hashmapGet [map, key, Nil]
+hashmapGet [Map map, key, notFound] =
+    case HM.lookup key map of
+        Just val -> return val
+        Nothing  -> return notFound
+hashmapGet _ = throwError BadArgs
+
+hashmapPut :: [MalVal] -> MalIO MalVal
+hashmapPut [Map map, key, val] = return . Map $ HM.insert key val map
+hashmapPut _ = throwError BadArgs
+
+hashmapRemove :: [MalVal] -> MalIO MalVal
+hashmapRemove (Map map:keys) = return . Map $ removed map keys
+  where
+    removed = foldl' (flip HM.delete)
+hashmapRemove _ = throwError BadArgs
+
+hashmapContains :: [MalVal] -> MalIO MalVal
+hashmapContains [Map map, key] = return . Bool $ isJust $ HM.lookup key map
+hashmapContains _ = throwError BadArgs
+
+hashmapKeys :: [MalVal] -> MalIO MalVal
+hashmapKeys [Map map] = return . List $ HM.keys map
+hashmapKeys _ = throwError BadArgs
+
+hashmapValues :: [MalVal] -> MalIO MalVal
+hashmapValues [Map map] = return . List $ HM.elems map
+hashmapValues _ = throwError BadArgs
+
+mapPred :: [MalVal] -> MalIO MalVal
+mapPred [Map _] = return $ Bool True
+mapPred [_] = return $ Bool False
+mapPred _ = throwError BadArgs
+
+malmap = Map . HM.fromList
 
