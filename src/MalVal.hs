@@ -10,6 +10,7 @@ import Data.Maybe (isJust)
 
 import qualified Data.HashMap.Lazy as HM
 import Data.Hashable (Hashable, hashWithSalt)
+import qualified Data.Vector as V
 import Text.Parsec (try)
 import Text.ParserCombinators.Parsec hiding (try, spaces)
 
@@ -45,6 +46,7 @@ data MalVal
   | String !String
   | Bool !Bool
   | List ![MalVal]
+  | Vector (V.Vector MalVal)
   | Map (HM.HashMap MalVal MalVal)
   | Nil
   | Func Fn
@@ -63,7 +65,8 @@ instance Hashable MalVal where
     hashWithSalt s Nil        = s `hashWithSalt` (2::Int) `hashWithSalt` False
     hashWithSalt s (Bool x)   = s `hashWithSalt` (3::Int) `hashWithSalt` x
     -- Misc
-    hashWithSalt s (List x)   = s `hashWithSalt` x
+    hashWithSalt s (List x)   = s `hashWithSalt` (0::Int) `hashWithSalt` x
+    hashWithSalt s (Vector x)   = V.foldl' hashWithSalt (s `hashWithSalt` (1::Int)) x
     hashWithSalt s (Lambda _ args expr) = s `hashWithSalt` args `hashWithSalt` expr
     -- We should never have to hash a Thunk.
     hashWithSalt _ (Thunk _ _) = error "Attempted to hash a thunk"
@@ -79,6 +82,8 @@ prettyPrint Nil = "nil"
 prettyPrint (Func _) = "#<builtin-function>"
 prettyPrint Lambda{} = "#<lambda>"
 prettyPrint (List vals) = "(" ++ printAll vals ++ ")"
+  where printAll = unwords . map prettyPrint
+prettyPrint (Vector vals) = "[" ++ printAll (V.toList vals) ++ "]"
   where printAll = unwords . map prettyPrint
 prettyPrint (Map map) = "{" ++ prettyPrintInner map ++ "}"
   where
@@ -182,3 +187,4 @@ mapPred _ = throwError BadArgs
 
 malmap = Map . HM.fromList
 
+vector vals = return . Vector $ V.fromList vals

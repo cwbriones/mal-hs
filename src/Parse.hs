@@ -29,6 +29,7 @@ malval = choice
   , malSymbol
   , malNumber
   , malString
+  , malVector
   , malList
   , specialForm
   ]
@@ -46,6 +47,11 @@ sigil s sym = try $ do
 
 malList :: Parser MalVal
 malList = List <$> malCollection '(' ')'
+
+malVector :: Parser MalVal
+malVector = fmap (List . (:) (Symbol "vector")) elements
+  where
+    elements = malCollection '[' ']'
 
 malMap :: Parser MalVal
 malMap = fmap (List . (:) (Symbol "hash-map")) elements

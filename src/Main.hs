@@ -299,6 +299,7 @@ initializeEnv = run builtinsOnly
                ,("keys", hashmapKeys)
                ,("vals", hashmapValues)
                ,("map?", mapPred)
+               ,("vector", vector)
                ]
 
 standardLibrary =

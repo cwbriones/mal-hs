@@ -23,6 +23,7 @@ executable mal-hs
                      , haskeline  == 0.7.2.3
                      , hashable   == 1.2.4.0
                      , unordered-containers == 0.2.7.0
+                     , vector == 0.11.0.0
 
 test-suite mal-hs-test
   type:                exitcode-stdio-1.0
