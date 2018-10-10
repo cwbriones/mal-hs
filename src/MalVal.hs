@@ -188,3 +188,13 @@ mapPred _ = throwError BadArgs
 malmap = Map . HM.fromList
 
 vector vals = return . Vector $ V.fromList vals
+
+vectorPred :: [MalVal] -> MalIO MalVal
+vectorPred [Vector _] = return $ Bool True
+vectorPred [_] = return $ Bool False
+vectorPred _ = throwError BadArgs
+
+conj :: [MalVal] -> MalIO MalVal
+conj [List list, val] = return $ List (val:list)
+conj [Vector v, val]  = return $ Vector (V.snoc v val)
+conj _ = throwError BadArgs

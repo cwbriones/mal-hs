@@ -83,7 +83,7 @@ eval (List list) = evalList list
 eval val = return val
 
 evalList :: [MalVal] -> MalIO MalVal
-evalList [Symbol "quote", val] = return val
+evalList [Symbol "quote", val] = quote val
 evalList [Symbol "quasiquote", val] = quasiquote val
 evalList [Symbol "unquote", val] = throwError UnquoteError
 evalList [Symbol "splice-unquote", val] = throwError UnquoteError
@@ -95,6 +95,10 @@ evalList [Symbol "def!", Symbol var, val] = eval' val >>= define var
 evalList [Symbol "defn!", Symbol var, List params, expr] = makeLambda params expr >>= define var
 evalList [Symbol "fn*", List params, expr] = makeLambda params expr
 evalList list = mapM eval' list >>= apply
+
+quote (List (Symbol "vector":vals)) = vector vals
+quote (List (Symbol "hash-map":vals)) = makeHashmap vals
+quote val = return val
 
 quasiquote (List [Symbol "unquote", val]) = eval' val
 quasiquote (List list) = quasiquoteList list []
@@ -300,6 +304,8 @@ initializeEnv = run builtinsOnly
                ,("vals", hashmapValues)
                ,("map?", mapPred)
                ,("vector", vector)
+               ,("vector?", vectorPred)
+               ,("conj", conj)
                ]
 
 standardLibrary =
